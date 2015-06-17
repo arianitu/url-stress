@@ -9,16 +9,35 @@ import (
 	"fmt"
 	"runtime"
 	"os"
+	"io/ioutil"
 )
 
-func Worker(url string, in <-chan int, sink chan<- int64) {
+func checkError(err error){
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+
+func Worker(url string, echo int, in <-chan int, sink chan<- int64) {
 	for _ = range in {
 		n := time.Now()
 		resp, err := http.Get(url)
 		r := time.Since(n)
-		if err != nil {
-			fmt.Println(err);
-			os.Exit(1)
+		checkError(err)
+
+		
+		if echo == 1 {
+			body, err := ioutil.ReadAll(resp.Body)
+			checkError(err)
+			
+			fmt.Println(resp.Status)
+			fmt.Printf("%s\n", body)
+		} 
+		if resp.StatusCode != http.StatusOK {
+			sink <- -1
+			resp.Body.Close()
+			continue
 		}
 		resp.Body.Close()
 		sink <- r.Nanoseconds()
@@ -34,6 +53,7 @@ func main() {
 	workers := flag.Int("workers", 0, "The number of workers. By default, it's set to number of CPUs.")
 	url := flag.String("url", "", "The url to stress. Must have http/https in the url (required).")
 	fout := flag.String("fout", "", "Path to file to print data in the format: request_number, latency(ms)\\n. This is useful to see how latency goes up over time on a graph")
+	echo := flag.Int("echo", 0, "Echo the body of the HTTP get response and the status code")
 	
 	flag.Parse()
 	if *url == "" {
@@ -49,12 +69,10 @@ func main() {
 	in := make(chan int)
 	sink := make(chan int64)
 	for i := 0; i < *workers; i++ {
-		go Worker(*url, in, sink)
+		go Worker(*url, *echo, in, sink)
 	}
 	
 	wg := &sync.WaitGroup{}
-	wg.Add(*requests)
-
 	var file *os.File
 	var err error
 	if (*fout != "") {
@@ -68,9 +86,15 @@ func main() {
 	var worst int64 = 0
 	var best int64 = math.MaxInt64
 	var totalTime int64 = 0
+	errors := 0
 	go func() {
 		count := 1
 		for t := range sink {
+			if t < 0 {
+				errors += 1
+				wg.Done()
+				continue
+			}
 			totalTime += t
 			if t > worst {
 				worst = t
@@ -101,15 +125,18 @@ func main() {
 	fmt.Println()
 	
 	for i := 0; i < *requests; i++ {
+		wg.Add(1)
 		in <- 1
 		time.Sleep(time.Duration(sleep) * time.Millisecond)
 	}
 	wg.Wait()
-	actualRps := float64(*requests) / time.Since(now).Seconds()
+	actualRps := float64(*requests - errors) / time.Since(now).Seconds()
 	avgDuration := time.Duration(totalTime/int64(*requests)) * time.Nanosecond
 	bestDuration := time.Duration(best) * time.Nanosecond
 	worstDuration := time.Duration(worst) * time.Nanosecond
 
-	fmt.Printf("Rps: %.2f Avg: %v Worst: %v Best: %v \n", actualRps, avgDuration, worstDuration, bestDuration)
-
+	fmt.Printf("Rps: %.2f Avg: %v Worst: %v Best: %v Errors: %.2f%%\n", actualRps, avgDuration, worstDuration, bestDuration, ( float64(errors) / float64(*requests)) * 100.0)
+	if errors > 0 {
+		fmt.Println("You had errors in some of your requests, use the -echo option to find what those errors were. Requests with errors are not counted towards rps, average, worst and best.")
+	}
 }

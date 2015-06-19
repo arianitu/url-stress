@@ -112,7 +112,7 @@ func main() {
 
 	var sleep time.Duration
 	if *rps > 0 {
-		sleep = time.Duration(int64((1000.0 / float64(*rps)) * 1000000.0)) * time.Nanosecond
+		sleep = time.Duration(1e9/ *rps) * time.Nanosecond
 	}
 	
 	if *rps == 0 {

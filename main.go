@@ -110,23 +110,23 @@ func main() {
 	}()
 	now := time.Now()
 
-	var sleep int
+	var sleep time.Duration
 	if *rps > 0 {
-		sleep = 1000 / *rps
-	} else {
-		sleep = 0
+		sleep = time.Duration(int64((1000.0 / float64(*rps)) * 1000000.0)) * time.Nanosecond
 	}
+	
 	if *rps == 0 {
 		fmt.Printf("Hitting URL %v with %v workers and %v requests as fast as I can \n", *url, *workers, *requests)
 	} else {
 		fmt.Printf("Hitting URL %v with %v workers, %v requests and %v rps \n", *url, *workers, *requests, *rps)
 	}
 	fmt.Println()
-
 	for i := 0; i < *requests; i++ {
 		wg.Add(1)
 		in <- 1
-		time.Sleep(time.Duration(sleep) * time.Millisecond)
+		if *rps > 0 {
+			time.Sleep(sleep)
+		}
 	}
 	wg.Wait()
 	actualRps := float64(*requests-errors) / time.Since(now).Seconds()

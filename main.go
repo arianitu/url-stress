@@ -112,9 +112,9 @@ func main() {
 
 	var sleep time.Duration
 	if *rps > 0 {
-		sleep = time.Duration(1e9/ *rps) * time.Nanosecond
+		sleep = time.Duration(1e9 / *rps) * time.Nanosecond
 	}
-	
+
 	if *rps == 0 {
 		fmt.Printf("Hitting URL %v with %v workers and %v requests as fast as I can \n", *url, *workers, *requests)
 	} else {

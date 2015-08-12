@@ -1,5 +1,5 @@
 # url-stress
-Stress a URL by specifying the requests per second, the number of requests and how many to run in parallel. If a request has an error, it is not counted towards the stats and you're told about it (you can see the errors with -echo=1). 
+Stress a URL by specifying the requests per second, the number of requests and how many to run in parallel. If a request has an error, it is not counted towards the stats and you're told about it (you can see the errors with -echo=true). 
 
 Usage of ./url-stress:
 ```

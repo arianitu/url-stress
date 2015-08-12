@@ -6,11 +6,20 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
+
+type HTTPRequest struct {
+	Url    string
+	Method string
+	Params *url.Values
+	Echo   bool
+}
 
 func checkError(err error) {
 	if err != nil {
@@ -19,20 +28,38 @@ func checkError(err error) {
 	}
 }
 
-func Worker(url string, echo int, in <-chan int, sink chan<- int64) {
-	for _ = range in {
+func Worker(in <-chan HTTPRequest, sink chan<- int64) {
+	for request := range in {
 		n := time.Now()
-		resp, err := http.Get(url)
-		r := time.Since(n)
+
+		var req *http.Request
+		var err error
+
+		if request.Params != nil {
+			req, err = http.NewRequest(
+				strings.ToUpper(request.Method),
+				request.Url,
+				strings.NewReader(request.Params.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
+
+		} else {
+			req, err = http.NewRequest(strings.ToUpper(request.Method), request.Url, nil)
+		}
 		checkError(err)
 
-		if echo == 1 {
+		client := &http.Client{}
+		resp, err := client.Do(req)
+
+		r := time.Since(n)
+		checkError(err)
+		if request.Echo {
 			body, err := ioutil.ReadAll(resp.Body)
 			checkError(err)
 
 			fmt.Println(resp.Status)
 			fmt.Printf("%s\n", body)
 		}
+
 		if resp.StatusCode != http.StatusOK {
 			sink <- -1
 			resp.Body.Close()
@@ -44,6 +71,16 @@ func Worker(url string, echo int, in <-chan int, sink chan<- int64) {
 
 }
 
+func GetURLParamsFromString(params string) *url.Values {
+	paramStringSplit := strings.Split(params, ",")
+	urlValues := url.Values{}
+	for _, paramString := range paramStringSplit {
+		params := strings.Split(paramString, ":")
+		urlValues.Add(params[0], params[1])
+	}
+	return &urlValues
+}
+
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -51,8 +88,10 @@ func main() {
 	rps := flag.Int("rps", 0, "The number of requests per second. If this is set to 0, it will send as many as possible.")
 	workers := flag.Int("workers", 0, "The number of workers. By default, it's set to number of CPUs.")
 	url := flag.String("url", "", "The url to stress. Must have http/https in the url (required).")
+	method := flag.String("method", "GET", "Method: GET, POST, PUT, HEAD, DELETE, OPTIONS")
+	params := flag.String("params", "", "Params in key value form separated by a comma, e.g param1:20,param2:30")
 	fout := flag.String("fout", "", "Path to file to print data in the format: request_number, latency(ms)\\n. This is useful to see how latency goes up over time on a graph")
-	echo := flag.Int("echo", 0, "Echo the body of the HTTP get response and the status code")
+	echo := flag.Bool("echo", false, "Echo the body of the HTTP get response and the status code")
 
 	flag.Parse()
 	if *url == "" {
@@ -65,10 +104,10 @@ func main() {
 		*workers = runtime.NumCPU()
 	}
 
-	in := make(chan int)
+	in := make(chan HTTPRequest)
 	sink := make(chan int64)
 	for i := 0; i < *workers; i++ {
-		go Worker(*url, *echo, in, sink)
+		go Worker(in, sink)
 	}
 
 	wg := &sync.WaitGroup{}
@@ -110,9 +149,9 @@ func main() {
 	}()
 	now := time.Now()
 
-	var sleep time.Duration
+	var throttle <-chan time.Time
 	if *rps > 0 {
-		sleep = time.Duration(1e9 / *rps) * time.Nanosecond
+		throttle = time.Tick(time.Duration(1e9 / *rps) * time.Nanosecond)
 	}
 
 	if *rps == 0 {
@@ -121,11 +160,19 @@ func main() {
 		fmt.Printf("Hitting URL %v with %v workers, %v requests and %v rps \n", *url, *workers, *requests, *rps)
 	}
 	fmt.Println()
+
+	request := HTTPRequest{Url: *url, Method: *method, Echo: *echo}
+	if *method == "POST" {
+		if *params != "" {
+			request.Params = GetURLParamsFromString(*params)
+		}
+	}
+
 	for i := 0; i < *requests; i++ {
 		wg.Add(1)
-		in <- 1
+		in <- request
 		if *rps > 0 {
-			time.Sleep(sleep)
+			<-throttle
 		}
 	}
 	wg.Wait()
